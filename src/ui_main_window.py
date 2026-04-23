@@ -1,26 +1,22 @@
-import os
-import sys
-import shutil
-import subprocess
-import numpy as np
-import nibabel as nib
-import vtk
-
+# --- 基础库导入 ---
+import os, sys, shutil, subprocess # 系统交互、文件操作、进程调用
+import numpy as np                # 数值计算
+import nibabel as nib             # 读写 NIfTI 医学图像格式
+import vtk                        # 3D 可视化核心库
+# --- PyQt6 GUI 库导入 ---
 from PyQt6.QtWidgets import (QMainWindow, QPushButton, QFileDialog, QLabel, 
-                             QHBoxLayout, QVBoxLayout, QWidget, QGroupBox, 
-                             QMessageBox, QColorDialog, QProgressBar, QApplication,
-                             QSlider, QScrollArea, QListWidget, QListWidgetItem,
-                             QFormLayout, QCheckBox, QFrame, QAbstractItemView)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
-from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter, QImage
+    QHBoxLayout, QVBoxLayout, QWidget, QGroupBox, QMessageBox, QColorDialog, 
+    QProgressBar, QApplication, QSlider, QScrollArea, QListWidget, QListWidgetItem, 
+    QFormLayout, QCheckBox, QFrame, QAbstractItemView)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings # 核心功能、多线程、信号槽、配置保存
+from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter, QImage # 图形绘制
 
-from config import (
-    INPUT_FOLDER, OUTPUT_FOLDER, WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT,
-    ORGANIZATION_NAME, APPLICATION_NAME, SETTINGS_KEY_LAST_DICOM_PATH, DEFAULT_DATASET_ID, DEFAULT_CONFIGURATION
-)
-from dicom_loader import DicomLoader
-from viewer_3d import Viewer3D
-from nii_to_stl import NiiToStlConverter
+# --- 项目内部模块导入 ---
+from config import (INPUT_FOLDER, OUTPUT_FOLDER, WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, 
+    ORGANIZATION_NAME, APPLICATION_NAME, SETTINGS_KEY_LAST_DICOM_PATH, DEFAULT_DATASET_ID, DEFAULT_CONFIGURATION)
+from dicom_loader import DicomLoader       # 自定义：DICOM 转 NIfTI 工具
+from viewer_3d import Viewer3D             # 自定义：VTK 渲染窗口封装
+from nii_to_stl import NiiToStlConverter   # 自定义：NIfTI 转 3D 网格工具
 
 STYLESHEET = """
 QMainWindow { background-color: #f5f6f7; }
@@ -44,207 +40,304 @@ QScrollArea { border: none; background: transparent; }
 
 # ================= 自定义列表行控件 =================
 class LabelRowWidget(QFrame):
+    # 定义两个自定义信号，用于与主窗口通信
+    # 信号1：当整行被点击时发射，传递参数 label_id (int)
     row_clicked = pyqtSignal(int)
+    # 信号2：当复选框状态改变时发射，传递参数 label_id (int) 和 状态 (bool)
     visibility_toggled = pyqtSignal(int, bool)
 
     def __init__(self, label_id, is_visible=True, parent=None):
         super().__init__(parent)
-        self.label_id = label_id
-        self.setObjectName("label_row")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        
+        self.label_id = label_id                # 保存当前行的 ID，方便后续查找
+        self.setObjectName("label_row")         # 设置对象名称，用于 QSS 样式表定位
+        # 设置鼠标悬停时的光标形状为“手型”，提示用户该行可点击
+        self.setCursor(Qt.CursorShape.PointingHandCursor) 
+
+        # --- 布局与组件初始化 ---
+        # 创建水平布局，将组件从左到右排列
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 5, 10, 5) # 设置外边距 (左, 上, 右, 下)
         
+        # 1. 标签名称 (例如 "Label 1")
         self.lbl_name = QLabel(f"Label {label_id}")
-        self.lbl_name.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        # 关键设置：设置属性 WA_TransparentForMouseEvents
+        # 作用：让鼠标事件“穿透”标签，直接传递给父控件 (QFrame)
+        # 这样点击文字时，也能触发下方的 mousePressEvent，而不是被文字挡住
         self.lbl_name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         
+        # 2. 可见性复选框
         self.cb_visible = QCheckBox()
-        self.cb_visible.setChecked(is_visible)
-        self.cb_visible.setStyleSheet("margin-left: auto; spacing: 5px;")
+        self.cb_visible.setChecked(is_visible)  # 初始化勾选状态
+        
+        # 绑定信号：当复选框状态切换 (toggled) 时，发射自定义信号 visibility_toggled
+        # 使用 lambda 捕获当前的 label_id 和勾选状态 checked
         self.cb_visible.toggled.connect(lambda checked: self.visibility_toggled.emit(self.label_id, checked))
         
+        # 将组件添加到布局中
         layout.addWidget(self.lbl_name)
         layout.addWidget(self.cb_visible)
-        self.setLayout(layout)
 
+    # --- 事件重写 ---
     def mousePressEvent(self, event):
+        # 核心逻辑：判断点击位置是否在复选框区域内
+        # 如果点击位置 不包含在复选框的几何区域内，则视为点击了“行”
         if not self.cb_visible.geometry().contains(event.pos()):
+            # 发射行点击信号，通知主窗口“用户选中了这一行”
             self.row_clicked.emit(self.label_id)
+        
+        # 调用父类的 mousePressEvent 以确保标准的事件处理流程继续
         super().mousePressEvent(event)
 
+    # 设置选中状态（用于高亮显示当前选中的行）
     def set_selected(self, selected):
         if selected:
-            self.setStyleSheet("""
-                #label_row { 
-                    background: #e3f2fd; 
-                    border-left: 4px solid #3498db; 
-                    border-radius: 6px; 
-                }
-            """)
+            # 如果选中，应用高亮样式 (蓝色背景 + 左侧蓝条)
+            self.setStyleSheet("#label_row { background: #e3f2fd; border-left: 4px solid #3498db; border-radius: 6px; }")
         else:
+            # 如果未选中，恢复透明背景
             self.setStyleSheet("#label_row { background: transparent; border-left: 4px solid transparent; border-radius: 6px; }")
 
 
 # ================= 推理线程 =================
 class InferenceWorker(QThread):
-    finished_signal = pyqtSignal(str, str) 
+    # 定义完成信号，用于通知主窗口任务结束
+    # 参数1: result_path (str) - 推理结果文件的路径
+    # 参数2: error_msg (str) - 错误信息（如果为空字符串表示无错误）
+    finished_signal = pyqtSignal(str, str)
+
     def __init__(self, input_nii_path, dataset_id=DEFAULT_DATASET_ID, configuration=DEFAULT_CONFIGURATION):
         super().__init__()
-        self.input_nii_path = input_nii_path
-        self.dataset_id = dataset_id
-        self.configuration = configuration
+        self.input_nii_path = input_nii_path    # 输入的 NIfTI 文件路径
+        self.dataset_id = dataset_id            # nnU-Net 数据集 ID
+        self.configuration = configuration      # 配置名称 (如 3d_fullres)
 
     def run(self):
+        # run() 方法是 QThread 的核心，线程启动时会自动执行这里的代码
         try:
+            # 1. 准备输入数据
+            # 获取文件名 (例如 patient_001.nii.gz)
             filename = os.path.basename(self.input_nii_path)
+            # 构建目标路径：将文件复制到项目的 INPUT_FOLDER 中
             temp_input_file = os.path.join(INPUT_FOLDER, filename)
+            
+            # 如果目标位置不存在该文件，则进行复制
+            # 注意：nnU-Net 通常要求输入是一个文件夹，这里简化处理直接复制文件进去
             if not os.path.exists(temp_input_file):
                 shutil.copy(self.input_nii_path, temp_input_file)
             
-            cmd = ["nnUNetv2_predict", "-i", INPUT_FOLDER, "-o", OUTPUT_FOLDER, "-d", str(self.dataset_id), "-f", "all", "-c", self.configuration]
+            # 2. 构建并执行 nnU-Net 命令行指令
+            # 组装命令列表：nnUNetv2_predict -i [输入文件夹] -o [输出文件夹] ...
+            cmd = [
+                "nnUNetv2_predict", 
+                "-i", INPUT_FOLDER, 
+                "-o", OUTPUT_FOLDER, 
+                "-d", str(self.dataset_id), 
+                "-f", "all", 
+                "-c", self.configuration
+            ]
+            # 使用 subprocess 运行命令
+            # capture_output=True: 捕获标准输出和错误输出
+            # text=True: 以字符串形式而非字节形式返回输出
+            # check=False: 即使返回码非0也不抛出异常，而是由我们手动检查
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             
+            # 3. 检查执行结果
+            # returncode != 0 表示命令执行出错
             if result.returncode != 0:
+                # 发射信号，返回空路径和错误信息
                 self.finished_signal.emit("", f"命令执行失败:\n{result.stderr}")
-                return
+                return # 结束线程
 
+            # 4. 查找输出文件
             found_file = None
+            # 策略 A：尝试根据原文件名查找对应的输出文件
             for f in os.listdir(OUTPUT_FOLDER):
+                # 检查是否是 nii 文件，且文件名包含原始文件名的主体部分
                 if (f.endswith(".nii.gz") or f.endswith(".nii")) and os.path.splitext(filename)[0] in f:
                     found_file = os.path.join(OUTPUT_FOLDER, f)
                     break
+            
+            # 策略 B：如果策略 A 没找到，取输出文件夹中最新修改的 nii 文件
             if not found_file:
                 nii_files = [os.path.join(OUTPUT_FOLDER, f) for f in os.listdir(OUTPUT_FOLDER) if f.endswith('.nii.gz') or f.endswith('.nii')]
-                if nii_files: found_file = max(nii_files, key=os.path.getmtime)
+                if nii_files: 
+                    # max(..., key=os.path.getmtime) 获取修改时间最新的文件
+                    found_file = max(nii_files, key=os.path.getmtime)
 
-            if found_file: self.finished_signal.emit(found_file, "")
-            else: self.finished_signal.emit("", "未找到结果文件。")
-        except Exception as e: self.finished_signal.emit("", str(e))
+            # 5. 发送最终结果
+            if found_file:
+                self.finished_signal.emit(found_file, "") # 成功：发送路径，错误信息为空
+            else:
+                self.finished_signal.emit("", "未找到结果文件。") # 失败：路径为空，发送错误提示
+                
+        except Exception as e: 
+            # 捕获代码执行过程中的任何 Python 异常
+            self.finished_signal.emit("", str(e)) 
 
 
 # ================= 主窗口 =================
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(WINDOW_TITLE)
-        self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        self.setStyleSheet(STYLESHEET)
-        self.setWindowIcon(self._create_logo_image())
-        
-        self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
-        self.input_nii_path = None
-        self.output_nii_path = None 
-        self.worker = None
-        self.label_data_cache = {}
-        self.current_selected_label = None
-        self.label_row_widgets = {}
-        self.slider_scales = {}
 
-        self.init_ui()
-        self._restore_last_path_hint()
-        self.statusBar().showMessage("👋 就绪。", 5000)
+        # --- 1. 窗口基础设置 ---
+        self.setWindowTitle(WINDOW_TITLE)               # 设置窗口标题 (来自 config.py)
+        self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)        # 设置窗口初始大小
+        self.setStyleSheet(STYLESHEET)                  # 应用全局 CSS 样式表
+        self.setWindowIcon(self._create_logo_image())   # 设置窗口图标 (调用下方自定义方法生成蓝色圆圈)
+        
+        # --- 2. 配置管理 ---
+        # QSettings 用于在注册表或 ini 文件中保存用户设置 (如上次打开的路径)
+        self.settings = QSettings(ORGANIZATION_NAME, APPLICATION_NAME)
+
+        # --- 3. 状态变量初始化 ---
+        self.input_nii_path = None      # 输入的 NIfTI 文件路径
+        self.output_nii_path = None     # AI 推理输出的文件路径
+        self.worker = None              # 推理线程对象
+        self.label_data_cache = {}      # 缓存：存储每个标签的材质参数 (颜色、透明度等)
+        self.current_selected_label = None # 当前在列表中点击选中的标签 ID
+        self.label_row_widgets = {}     # 缓存：存储列表中的行控件对象
+        self.slider_scales = {}         # 缓存：存储滑块的缩放比例 (因为 QSlider 只支持整数)
+
+        # --- 4. 界面构建与恢复 ---
+        self.init_ui()                  # 调用方法构建界面布局
+        self._restore_last_path_hint()  # 从配置中读取上次打开的路径并显示提示
+        self.statusBar().showMessage("👋 就绪。", 5000) # 在底部状态栏显示欢迎信息，5秒后消失
 
     def _create_logo_image(self, width=64, height=64, color="#3498db"):
+        # 创建一个 ARGB32 格式的空白图像 (支持透明通道)
         image = QImage(width, height, QImage.Format.Format_ARGB32)
-        image.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor(color))
-        painter.setPen(Qt.PenStyle.NoPen)
+        image.fill(Qt.GlobalColor.transparent) # 背景填充为透明
+        
+        painter = QPainter(image)              # 创建画家对象
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing) # 开启抗锯齿，使边缘平滑
+        painter.setBrush(QColor(color))        # 设置画刷颜色 (蓝色)
+        painter.setPen(Qt.PenStyle.NoPen)      # 设置画笔为无 (不绘制边框)
+        
+        # 绘制椭圆 (x, y, w, h)，这里留了 2px 边距
         painter.drawEllipse(2, 2, width-4, height-4)
-        painter.end()
+        painter.end()                          # 结束绘制
+        
+        # 将 QImage 转换为 QIcon 返回
         return QIcon(QPixmap.fromImage(image))
 
     def init_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setSpacing(15)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        # --- 主布局：水平布局 (左控制栏 | 右3D视图) ---
+        central_widget = QWidget()             # 创建中心控件
+        self.setCentralWidget(central_widget)  # 设置为主窗口的中心控件
+        main_layout = QHBoxLayout(central_widget) # 创建水平布局管理器
+        main_layout.setSpacing(15)             # 设置控件间距
+        main_layout.setContentsMargins(15, 15, 15, 15) # 设置外边距
 
+        # --- 左侧：滚动区域 (Scroll Area) ---
+        # 使用滚动区域是为了当控制面板内容过多时，可以滚动查看，而不拉伸窗口
         scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidgetResizable(True)   # 内容随区域大小自动调整
+        # 禁止水平滚动条，强制内容换行或适应宽度
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
+
+        # 滚动区域的内容容器
         scroll_content = QWidget()
+        # 内容容器使用垂直布局，将各个 GroupBox 从上到下排列
         self.scroll_layout = QVBoxLayout(scroll_content)
         self.scroll_layout.setSpacing(15)
         
-        # 1. 文件与推理
+        # 面板1：数据与推理
+        # 1. 创建 GroupBox 容器
         file_group = self._create_group_box("📂 数据与推理")
-        file_layout = QVBoxLayout()
+        file_layout = QVBoxLayout() # 内部使用垂直布局
+
+        # --- 导入按钮 ---
         self.btn_import = QPushButton("📂 导入 DICOM 序列")
-        self.btn_import.clicked.connect(self.load_dicom)
-        self.btn_import.setMinimumHeight(40)
+        self.btn_import.clicked.connect(self.load_dicom)  # 绑定点击事件
+        self.btn_import.setMinimumHeight(40)              # 设置最小高度，方便点击
         file_layout.addWidget(self.btn_import)
         
+        # --- 路径提示标签 ---
         self.lbl_path_hint = QLabel()
-        self.lbl_path_hint.setObjectName("path-hint")
+        self.lbl_path_hint.setObjectName("path-hint")     # 设置对象名以便在 CSS 中定制样式
         file_layout.addWidget(self.lbl_path_hint)
 
+        # --- 文件状态标签 ---
         self.lbl_file = QLabel("❌ 未选择文件")
-        self.lbl_file.setWordWrap(True)
+        self.lbl_file.setWordWrap(True)                   # 允许文字自动换行
+        # 设置初始样式：红色文字，淡红背景，圆角
         self.lbl_file.setStyleSheet("color: #e74c3c; padding: 5px; background: #fdf2f2; border-radius: 4px;")
         file_layout.addWidget(self.lbl_file)
 
+        # --- 推理按钮 ---
         self.btn_infer = QPushButton("🚀 开始 AI 推理")
         self.btn_infer.clicked.connect(self.run_inference)
-        self.btn_infer.setObjectName("btn-success")
-        self.btn_infer.setEnabled(False)
+        self.btn_infer.setObjectName("btn-success")      # 使用 CSS 中定义的成功按钮样式 (绿色)
+        self.btn_infer.setEnabled(False)                 # 初始禁用，导入文件后才启用
         self.btn_infer.setMinimumHeight(40)
         file_layout.addWidget(self.btn_infer)
         
+        # --- 进度条 ---
         self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setVisible(False)              # 初始隐藏，推理开始时显示
+        self.progress_bar.setRange(0, 0)                 # 设置为 0-0，显示为“忙碌”动画而非具体进度
         file_layout.addWidget(self.progress_bar)
+
+        # 应用布局并添加到主滚动布局
         file_group.setLayout(file_layout)
         self.scroll_layout.addWidget(file_group)
 
-        # 2. 3D 显示控制
+        # 面板 2：3D 显示控制
+        # 2. 3D 显示控制面板
         view_group = self._create_group_box("👁️ 3D 可视化")
         view_layout = QVBoxLayout()
+
+        # --- 生成 3D 按钮 ---
         self.btn_show_3d = QPushButton("🧊 生成并显示 3D 模型")
         self.btn_show_3d.clicked.connect(self.show_3d_model)
         self.btn_show_3d.setEnabled(True)
         self.btn_show_3d.setMinimumHeight(40)
         view_layout.addWidget(self.btn_show_3d)
+
+        # --- 状态标签 ---
         self.lbl_status_3d = QLabel("⏳ 状态：等待推理结果")
-        self.lbl_status_3d.setObjectName("status-label")
+        self.lbl_status_3d.setObjectName("status-label")      # 对应 CSS 中的灰色斜体样式
         view_layout.addWidget(self.lbl_status_3d)
         view_group.setLayout(view_layout)
         self.scroll_layout.addWidget(view_group)
 
-        # 3. 标签列表
+        # 3. 面板 3：标签列表 
+        # 3. 标签列表面板
         self.layer_group = self._create_group_box("📑 结构列表 (点击选中 / 勾选显示)")
         layer_layout = QVBoxLayout()
+
         self.label_list = QListWidget()
-        self.label_list.setMinimumHeight(180)
-        self.label_list.setSpacing(1)
+        self.label_list.setMinimumHeight(180)     # 设置最小高度
+        self.label_list.setSpacing(1)             # 项之间的间距
         self.label_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # 关键设置：禁用默认的选中高亮，因为我们用自定义控件的高亮样式
         self.label_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+
         layer_layout.addWidget(self.label_list)
         self.layer_group.setLayout(layer_layout)
         self.scroll_layout.addWidget(self.layer_group)
 
+        # 面板 4：材质属性编辑器
         # 4. 材质属性编辑器
         self.mat_group = self._create_group_box("🎨 材质属性编辑器")
-        mat_layout = QFormLayout()
+        mat_layout = QFormLayout()        # 表单布局：左侧标签，右侧控件
         mat_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         
+        # --- 目标提示 ---
         self.lbl_mat_target = QLabel("请在上方列表中点击一个标签")
         self.lbl_mat_target.setStyleSheet("color: #7f8c8d; font-style: italic; margin-bottom: 10px;")
-        mat_layout.addRow(self.lbl_mat_target)
+        mat_layout.addRow(self.lbl_mat_target)      # 占满一行
 
+        # --- 颜色选择按钮 ---
         self.btn_color = QPushButton("选择基础颜色")
-        self.btn_color.setEnabled(False)
+        self.btn_color.setEnabled(False)      # 初始禁用
         self.btn_color.clicked.connect(self.pick_color)
         mat_layout.addRow(self.btn_color)
 
+        # --- 滑块组 ---
         self.sliders = {}
+        # 定义属性配置：(显示名, 键名, 最小值, 最大值, 步长, 默认值)
         props = [
             ("透明度", "opacity", 0.0, 1.0, 0.01, 1.0),
             ("环境光", "ambient", 0.0, 1.0, 0.01, 0.4),
@@ -254,50 +347,63 @@ class MainWindow(QMainWindow):
         ]
 
         for label_text, key, min_v, max_v, step, default_v in props:
-            slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setEnabled(False)
+            slider = QSlider(Qt.Orientation.Horizontal) # 创建水平滑块
+            slider.setEnabled(False)           # 初始禁用
+            
+            # QSlider 只能处理整数，所以需要缩放 (例如 0.0-1.0 映射到 0-100)
             scale = 100 if max_v <= 1.0 else 1
             self.slider_scales[key] = scale
             
             slider.setMinimum(int(min_v * scale))
             slider.setMaximum(int(max_v * scale))
             slider.setValue(int(default_v * scale))
+            # 绑定值改变信号，使用 lambda 传递键名 key 和当前值 v
             slider.valueChanged.connect(lambda v, k=key: self.on_slider_changed(k, v))
-            mat_layout.addRow(label_text, slider)
-            self.sliders[key] = slider
+            
+            mat_layout.addRow(label_text, slider) # 添加到表单
+            self.sliders[key] = slider            # 缓存滑块对象
 
         self.mat_group.setLayout(mat_layout)
         self.scroll_layout.addWidget(self.mat_group)
 
-        # 5. 导出
+        # 面板 5：导出结果
+        # 5. 导出面板
         export_group = self._create_group_box("💾 导出结果")
         export_layout = QVBoxLayout()
         
+        # --- 导出 STL ---
         self.btn_export_stl = QPushButton("📐 导出 STL (合并可见)")
+        # 使用 lambda 传递参数 "stl" 给通用的 export_file 方法
         self.btn_export_stl.clicked.connect(lambda: self.export_file("stl"))
         self.btn_export_stl.setEnabled(False)
         export_layout.addWidget(self.btn_export_stl)
-        
+
+        # --- 导出 OBJ ---
         self.btn_export_obj = QPushButton("🎬 导出 OBJ (合并可见)")
         self.btn_export_obj.clicked.connect(lambda: self.export_file("obj"))
         self.btn_export_obj.setEnabled(False)
         export_layout.addWidget(self.btn_export_obj)
 
-        # 【新增】导出 NIfTI 按钮
+        # --- 导出 NIfTI (新增功能) ---
         self.btn_export_nii = QPushButton("🧠 导出 NIfTI (合并可见)")
         self.btn_export_nii.clicked.connect(self.export_nii_file)
         self.btn_export_nii.setEnabled(False)
         export_layout.addWidget(self.btn_export_nii)
-        
+
         export_group.setLayout(export_layout)
         self.scroll_layout.addWidget(export_group)
 
-        self.scroll_layout.addStretch()
+        self.scroll_layout.addStretch() # 在底部添加伸缩因子，将所有控件推向顶部
+        
+        # 将内容容器放入滚动区域
         scroll_area.setWidget(scroll_content)
 
-        # 右侧 3D 视图
-        self.viewer = Viewer3D()
-        self.viewer.setMinimumWidth(600)
+        # --- 右侧：3D 视图 ---
+        self.viewer = Viewer3D()          # 实例化自定义的 VTK 窗口类 (来自 viewer_3d.py)
+        self.viewer.setMinimumWidth(600)  # 设置最小宽度，保证 3D 视图有足够的空间
+        
+        # 将左侧滚动区和右侧 3D 视图添加到主水平布局中
+        # 参数 1 和 3 是拉伸因子，意味着 3D 视图的宽度将是左侧控制栏的 3 倍
         main_layout.addWidget(scroll_area, 1) 
         main_layout.addWidget(self.viewer, 3)
 
