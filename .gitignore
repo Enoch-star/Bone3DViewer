@@ -1,0 +1,54 @@
+# ================= PyTorch 模型文件 =================
+# 忽略所有后缀为 .pth 和 .pt 的文件
+*.pth
+*.pt
+
+# 如果只想忽略特定文件夹下的模型（例如 nnUNet 的结果）
+# nnUNetFrame/nnUNet_results/**/*.pth
+
+# ================= 其他常见的忽略项 =================
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# IDE 配置
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 数据文件 (通常数据文件很大，也不建议上传)
+*.nii
+*.nii.gz
+*.mhd
+*.raw

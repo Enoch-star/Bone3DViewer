@@ -6,6 +6,17 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR) # 返回到 Bone3DViewer111 目录
 
+
+NNUNET_BASE_PATH = os.path.join(PROJECT_ROOT, "data/nnUNetFrame")
+
+nnUNet_raw_path = os.path.join(NNUNET_BASE_PATH, "nnUNet_raw")
+nnUNet_preprocessed_path = os.path.join(NNUNET_BASE_PATH, "nnUNet_preprocessed")
+nnUNet_results_path = os.path.join(NNUNET_BASE_PATH, "nnUNet_results")
+os.environ['nnUNet_raw'] = nnUNet_raw_path
+os.environ['nnUNet_preprocessed'] = nnUNet_preprocessed_path
+os.environ['nnUNet_results'] = nnUNet_results_path
+
+
 # 定义输入输出文件夹
 INPUT_FOLDER = os.path.join(PROJECT_ROOT, "data/temp_input")
 OUTPUT_FOLDER = os.path.join(PROJECT_ROOT, "data/temp_output")
@@ -15,7 +26,7 @@ for folder in [INPUT_FOLDER, OUTPUT_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
 # ================= AI 模型默认配置 =================
-DEFAULT_DATASET_ID = "603"
+DEFAULT_DATASET_ID = "604"
 DEFAULT_CONFIGURATION = "3d_fullres"
 
 # ================= UI 默认配置 =================

@@ -1,0 +1,16 @@
+{
+    "channel_names": {
+        "0": "CT"
+    },
+    "labels": {
+        "background": 0,
+        "Ribs1": 1,
+        "Ribs2": 2,
+        "Ribs3": 3,
+        "Ribs4": 4,
+        "Ribs5": 5,
+        "Ribs6": 6
+    },
+    "numTraining": 100,
+    "file_ending": ".nii.gz"
+}

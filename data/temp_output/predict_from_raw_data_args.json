@@ -1,0 +1,11 @@
+{
+    "folder_with_segs_from_prev_stage": null,
+    "list_of_lists_or_source_folder": "D:\\Work\\FAS-Model\\function\\Bone3DViewer111\\Bone3DViewer\\data/temp_input",
+    "num_parts": 1,
+    "num_processes_preprocessing": 3,
+    "num_processes_segmentation_export": 3,
+    "output_folder_or_list_of_truncated_output_files": "D:\\Work\\FAS-Model\\function\\Bone3DViewer111\\Bone3DViewer\\data/temp_output",
+    "overwrite": true,
+    "part_id": 0,
+    "save_probabilities": false
+}

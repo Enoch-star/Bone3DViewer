@@ -16,7 +16,7 @@ from PyQt6.QtGui import QColor, QIcon, QPixmap, QPainter, QImage
 
 from config import (
     INPUT_FOLDER, OUTPUT_FOLDER, WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT,
-    ORGANIZATION_NAME, APPLICATION_NAME, SETTINGS_KEY_LAST_DICOM_PATH
+    ORGANIZATION_NAME, APPLICATION_NAME, SETTINGS_KEY_LAST_DICOM_PATH, DEFAULT_DATASET_ID, DEFAULT_CONFIGURATION
 )
 from dicom_loader import DicomLoader
 from viewer_3d import Viewer3D
@@ -91,7 +91,7 @@ class LabelRowWidget(QFrame):
 # ================= 推理线程 =================
 class InferenceWorker(QThread):
     finished_signal = pyqtSignal(str, str) 
-    def __init__(self, input_nii_path, dataset_id="603", configuration="3d_fullres"):
+    def __init__(self, input_nii_path, dataset_id=DEFAULT_DATASET_ID, configuration=DEFAULT_CONFIGURATION):
         super().__init__()
         self.input_nii_path = input_nii_path
         self.dataset_id = dataset_id
@@ -421,7 +421,7 @@ class MainWindow(QMainWindow):
         self.lbl_status_3d.setStyleSheet("color: #2980b9; font-weight: bold;")
         self.statusBar().showMessage("⏳ 正在执行 nnU-Net 推理...")
 
-        self.worker = InferenceWorker(self.input_nii_path, dataset_id="603", configuration="3d_fullres")
+        self.worker = InferenceWorker(self.input_nii_path, dataset_id=DEFAULT_DATASET_ID, configuration=DEFAULT_CONFIGURATION)
         self.worker.finished_signal.connect(self.on_inference_finished)
         self.worker.start()
 
